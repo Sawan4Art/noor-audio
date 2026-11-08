@@ -32,7 +32,11 @@ jobs:
 
     env:
       GH_TOKEN: ${{ github.token }}
-      RELEASE_TAG: audio-v1
+      # حد جت هب: ١٠٠٠ أصلٍ للإصدار الواحد — فالتقسيم ٧ قراءٍ لكل إصدار
+      # (٧×١١٤=٧٩٨ أصلًا) بنفس ترتيب مجلدات التطبيق (QuranReciters.ALL)
+      RELEASE_V1: audio-v1
+      RELEASE_V2: audio-v2
+      RELEASE_V3: audio-v3
       # عدة القراء العشرين — بترتيب التطبيق نفسه (QuranReciters)
       ALL_FOLDERS: "Abdul_Basit_Murattal_192kbps Minshawy_Murattal_128kbps Husary_128kbps Mustafa_Ismail_48kbps mahmoud_ali_al_banna_32kbps Mohammad_al_Tablaway_128kbps Ayman_Sowaid_64kbps Ali_Hajjaj_AlSuesy_128kbps Ahmed_Neana_128kbps Muhammad_Jibreel_128kbps Alafasy_128kbps Abdurrahmaan_As-Sudais_192kbps MaherAlMuaiqly128kbps Nasser_Alqatami_128kbps Yasser_Ad-Dussary_128kbps Abdullaah_3awwaad_Al-Juhaynee_128kbps Hani_Rifai_192kbps Salaah_AbdulRahman_Bukhatir_128kbps khalefa_al_tunaiji_64kbps Saood_ash-Shuraym_128kbps"
       # عدد آيات السور ١..١١٤ — عدّ المصحف المعتمد
@@ -56,16 +60,20 @@ jobs:
       - name: تجهيز الإصدار وقائمة الموجود
         run: |
           set -euo pipefail
-          # إنشاء الإصدار بمنافسة آمنة — الدفعات المتوازية كلها تنادي معاً
-          for i in 1 2 3 4 5 6; do
-            if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then break; fi
-            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-              --title "أصوات التلاوة — سورة سورة" \
-              --notes "مرآة تلاوات everyayah — كل أصلٍ «مجلد-رقم-السورة.zip» بآياته بأسمائها المعتمدة (٣ خانات سورة + ٣ خانات آية). يستعمله تطبيق نور المسلم للتنزيل المضمون، ويتحول إلى everyayah آيةً آيةً إن غاب الأصل." >/dev/null 2>&1 && break
-            sleep 10
+          # تجهيز الإصدارات الثلاثة بمنافسة آمنة ثم قوائم موجوداتها
+          for TAG in "$RELEASE_V1" "$RELEASE_V2" "$RELEASE_V3"; do
+            for i in 1 2 3 4 5 6; do
+              if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then break; fi
+              gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+                --title "أصوات التلاوة — سورة سورة ($TAG)" \
+                --notes "مرآة تلاوات everyayah — كل أصلٍ «مجلد-رقم-السورة.zip» بآياته بأسمائها المعتمدة (٣ خانات سورة + ٣ خانات آية). يستعمله تطبيق نور المسلم للتنزيل المضمون، ويتحول إلى everyayah آيةً آيةً إن غاب الأصل." >/dev/null 2>&1 && break
+              sleep 10
+            done
           done
-          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' > existing_assets.txt || true
-          echo "الموجود حاليًا: $(wc -l < existing_assets.txt) أصلًا"
+          gh release view "$RELEASE_V1" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' > assets_v1.txt || true
+          gh release view "$RELEASE_V2" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' > assets_v2.txt || true
+          gh release view "$RELEASE_V3" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' > assets_v3.txt || true
+          echo "الموجود: v1=$(wc -l < assets_v1.txt) v2=$(wc -l < assets_v2.txt) v3=$(wc -l < assets_v3.txt)"
 
       - name: تنزيل السور ورفعها
         run: |
@@ -76,6 +84,15 @@ jobs:
           OFFSET=(0 0)
           off=0
           for c in "${COUNTS[@]}"; do off=$((off+c)); OFFSET+=("$off"); done
+
+          release_for() {
+            case "$1" in
+              Abdul_Basit_Murattal_192kbps|Minshawy_Murattal_128kbps|Husary_128kbps|Mustafa_Ismail_48kbps|mahmoud_ali_al_banna_32kbps|Mohammad_al_Tablaway_128kbps|Ayman_Sowaid_64kbps) echo "$RELEASE_V1" ;;
+              Ali_Hajjaj_AlSuesy_128kbps|Ahmed_Neana_128kbps|Muhammad_Jibreel_128kbps|Alafasy_128kbps|Abdurrahmaan_As-Sudais_192kbps|MaherAlMuaiqly128kbps|Nasser_Alqatami_128kbps) echo "$RELEASE_V2" ;;
+              *) echo "$RELEASE_V3" ;;
+            esac
+          }
+          export -f release_for
 
           edition_for() {
             case "$1" in
@@ -128,7 +145,8 @@ jobs:
             for s in $(seq 1 114); do
               count=${COUNTS[$((s-1))]}
               name=$(printf "%s-%03d.zip" "$folder" "$s")
-              if grep -qx "$name" existing_assets.txt 2>/dev/null; then
+              TAG=$(release_for "$folder")
+              if grep -qx "$name" "assets_${TAG#audio-}.txt" 2>/dev/null; then
                 continue
               fi
               outdir="work/$folder/$s"; mkdir -p "$outdir"
@@ -143,10 +161,10 @@ jobs:
               # الاسم المسبوق بمجلد الشيخ — عقد التطبيق mirrorAssetName
               zip -q -j "work/$folder/$name" "$outdir"/*.mp3
               up=0
-              for try in 1 2 3 4; do
-                if gh release upload "$RELEASE_TAG" "work/$folder/$name" \
+              for try in 1 2 3 4 5 6; do
+                if gh release upload "$TAG" "work/$folder/$name" \
                   --clobber --repo "$GITHUB_REPOSITORY" 2>/dev/null; then up=1; break; fi
-                echo "إعادة رفع $name (المحاولة $try)"; sleep $((try*8))
+                echo "إعادة رفع $name إلى $TAG (المحاولة $try)"; sleep $((try*6))
               done
               [ "$up" = 1 ] || echo "UPLOAD-FAIL $name" >> missing.txt
               rm -rf "$outdir" "work/$folder/$name"
