@@ -56,10 +56,14 @@ jobs:
       - name: تجهيز الإصدار وقائمة الموجود
         run: |
           set -euo pipefail
-          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+          # إنشاء الإصدار بمنافسة آمنة — الدفعات المتوازية كلها تنادي معاً
+          for i in 1 2 3 4 5 6; do
+            if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then break; fi
             gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
               --title "أصوات التلاوة — سورة سورة" \
-              --notes "مرآة تلاوات everyayah — كل أصلٍ «مجلد-رقم-السورة.zip» بآياته بأسمائها المعتمدة (٣ خانات سورة + ٣ خانات آية). يستعمله تطبيق نور المسلم للتنزيل المضمون، ويتحول إلى everyayah آيةً آيةً إن غاب الأصل."
+              --notes "مرآة تلاوات everyayah — كل أصلٍ «مجلد-رقم-السورة.zip» بآياته بأسمائها المعتمدة (٣ خانات سورة + ٣ خانات آية). يستعمله تطبيق نور المسلم للتنزيل المضمون، ويتحول إلى everyayah آيةً آيةً إن غاب الأصل." >/dev/null 2>&1 && break
+            sleep 10
+          done
           gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' > existing_assets.txt || true
           echo "الموجود حاليًا: $(wc -l < existing_assets.txt) أصلًا"
 
@@ -129,17 +133,23 @@ jobs:
               fi
               outdir="work/$folder/$s"; mkdir -p "$outdir"
               export F_FOLDER="$folder" F_SURA="$s" F_OUT="$outdir" F_OFF="${OFFSET[$s]}"
-              printf "%s\n" $(seq 1 "$count") | xargs -P 8 -n 1 -I{} bash -c \
+              printf "%s\n" $(seq 1 "$count") | xargs -P 8 -I{} bash -c \
                 'dl "$F_FOLDER" "$F_SURA" "{}" "$F_OUT"'
               got=$(ls -1 "$outdir" 2>/dev/null | wc -l)
               if [ "$got" -eq 0 ]; then
                 echo "!! السورة $s لم يُجلب منها ملف — تُترك للتطبيق ليجلبها آية آية"
                 continue
               fi
-              zip -q -j "work/$folder/$(printf '%03d' $s).zip" "$outdir"/*.mp3
-              gh release upload "$RELEASE_TAG" "work/$folder/$(printf '%03d' $s).zip" \
-                --clobber --repo "$GITHUB_REPOSITORY"
-              rm -rf "$outdir" "work/$folder/$(printf '%03d' $s).zip"
+              # الاسم المسبوق بمجلد الشيخ — عقد التطبيق mirrorAssetName
+              zip -q -j "work/$folder/$name" "$outdir"/*.mp3
+              up=0
+              for try in 1 2 3 4; do
+                if gh release upload "$RELEASE_TAG" "work/$folder/$name" \
+                  --clobber --repo "$GITHUB_REPOSITORY" 2>/dev/null; then up=1; break; fi
+                echo "إعادة رفع $name (المحاولة $try)"; sleep $((try*8))
+              done
+              [ "$up" = 1 ] || echo "UPLOAD-FAIL $name" >> missing.txt
+              rm -rf "$outdir" "work/$folder/$name"
             done
             miss=$(grep -c "^MISS $folder/" missing.txt 2>/dev/null || echo 0)
             echo "==== انتهى $folder — الفاقد: $miss ===="
