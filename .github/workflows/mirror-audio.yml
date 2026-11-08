@@ -1,0 +1,158 @@
+name: مرآة أصوات التلاوة
+
+# توجيه المالك ٢٠٢٦-١١-٠٨: «عايز اخلي الاصوات دي تكون موجوده على سيرفر
+# على جت هب او على الموقع بتاع التطبيق علشان نضمن ان التحميل يتم صح»
+# — فالمرآة هنا: كل سورةٍ لكل قارئٍ ملفٌ مضغوطٌ واحد يُرفع في إصدار
+# audio-v1، والتطبيق ينزّله أولًا فإن تعذّر جرّب everyayah نفسه.
+#
+# التشغيل: workflow_dispatch — إما «folders» بأسماء مجلدات مفصولة
+# بمسافة، أو «index» لزوجٍ ثابت من القائمة (٠..٩). إعادة التشغيل
+# رخيصة: ما رُفع من سور يُتخطى تلقائيًا.
+
+on:
+  workflow_dispatch:
+    inputs:
+      folders:
+        description: 'مجلدات القراء مفصولة بمسافة (تغلب على index إن حضرت)'
+        required: false
+        default: ''
+      index:
+        description: 'فهرس زوج القراء الثابت ٠..٩'
+        required: false
+        default: '0'
+
+permissions:
+  contents: write
+
+jobs:
+  mirror:
+    name: تنزيل السور ورفعها
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: audio-v1
+      # عدة القراء العشرين — بترتيب التطبيق نفسه (QuranReciters)
+      ALL_FOLDERS: "Abdul_Basit_Murattal_192kbps Minshawy_Murattal_128kbps Husary_128kbps Mustafa_Ismail_48kbps mahmoud_ali_al_banna_32kbps Mohammad_al_Tablaway_128kbps Ayman_Sowaid_64kbps Ali_Hajjaj_AlSuesy_128kbps Ahmed_Neana_128kbps Muhammad_Jibreel_128kbps Alafasy_128kbps Abdurrahmaan_As-Sudais_192kbps MaherAlMuaiqly128kbps Nasser_Alqatami_128kbps Yasser_Ad-Dussary_128kbps Abdullaah_3awwaad_Al-Juhaynee_128kbps Hani_Rifai_192kbps Salaah_AbdulRahman_Bukhatir_128kbps khalefa_al_tunaiji_64kbps Saood_ash-Shuraym_128kbps"
+      # عدد آيات السور ١..١١٤ — عدّ المصحف المعتمد
+      AYAH_COUNTS: "7 286 200 176 120 165 206 75 129 109 123 111 43 52 99 128 111 110 98 135 112 78 118 64 77 227 93 88 69 60 34 30 73 54 45 83 182 88 75 85 54 53 89 59 37 35 38 29 18 45 60 49 62 55 78 96 29 22 24 13 14 11 11 18 12 12 30 52 52 44 28 28 20 56 40 31 50 40 46 42 29 19 36 25 22 17 19 26 30 20 15 21 11 8 8 19 5 8 8 11 11 8 3 9 5 4 7 3 6 3 5 4 5 6"
+
+    steps:
+      - name: تحديد قراء هذه الدفعة
+        id: pick
+        run: |
+          set -euo pipefail
+          read -ra ALL <<< "$ALL_FOLDERS"
+          if [ -n "${{ github.event.inputs.folders }}" ]; then
+            PICKED=(${{ github.event.inputs.folders }})
+          else
+            i=${{ github.event.inputs.index }}
+            PICKED=("${ALL[i*2]}" "${ALL[i*2+1]}")
+          fi
+          echo "picked=${PICKED[*]}" >> "$GITHUB_OUTPUT"
+          echo "قراء الدفعة: ${PICKED[*]}"
+
+      - name: تجهيز الإصدار وقائمة الموجود
+        run: |
+          set -euo pipefail
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "أصوات التلاوة — سورة سورة" \
+              --notes "مرآة تلاوات everyayah — كل أصلٍ «مجلد-رقم-السورة.zip» بآياته بأسمائها المعتمدة (٣ خانات سورة + ٣ خانات آية). يستعمله تطبيق نور المسلم للتنزيل المضمون، ويتحول إلى everyayah آيةً آيةً إن غاب الأصل."
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' > existing_assets.txt || true
+          echo "الموجود حاليًا: $(wc -l < existing_assets.txt) أصلًا"
+
+      - name: تنزيل السور ورفعها
+        run: |
+          set -uo pipefail
+          mkdir -p work
+          read -ra COUNTS <<< "$AYAH_COUNTS"
+          # بادئة الآيات الكلية لكل سورة (للاحتياط islamic.network)
+          OFFSET=(0 0)
+          off=0
+          for c in "${COUNTS[@]}"; do off=$((off+c)); OFFSET+=("$off"); done
+
+          edition_for() {
+            case "$1" in
+              Abdul_Basit_Murattal_192kbps) echo "ar.abdulbasitmurattal" ;;
+              Minshawy_Murattal_128kbps) echo "ar.minshawi" ;;
+              Husary_128kbps) echo "ar.husary" ;;
+              Ayman_Sowaid_64kbps) echo "ar.aymanswoaid" ;;
+              Muhammad_Jibreel_128kbps) echo "ar.muhammadjibreel" ;;
+              Alafasy_128kbps) echo "ar.alafasy" ;;
+              Abdurrahmaan_As-Sudais_192kbps) echo "ar.abdurrahmaansudais" ;;
+              MaherAlMuaiqly128kbps) echo "ar.mahermuaiqly" ;;
+              Hani_Rifai_192kbps) echo "ar.hanirifai" ;;
+              Saood_ash-Shuraym_128kbps) echo "ar.saoodshuraym" ;;
+              *) echo "" ;;
+            esac
+          }
+          export -f edition_for
+
+          dl() {
+            local folder="$1" s="$2" a="$3" outdir="$4"
+            local ff aa out i edition g
+            ff=$(printf "%03d" "$s"); aa=$(printf "%03d" "$a")
+            out="$outdir/$ff$aa.mp3"
+            [ -s "$out" ] && return 0
+            for i in 1 2 3; do
+              curl -fsSL --retry 2 --max-time 120 -o "$out" \
+                "https://everyayah.com/data/$folder/$ff$aa.mp3" 2>/dev/null && [ -s "$out" ] && return 0
+              sleep 1
+            done
+            edition=$(edition_for "$folder")
+            if [ -n "$edition" ]; then
+              g=$(( OFFSET[s] + a ))
+              for br in 128 64; do
+                for i in 1 2; do
+                  curl -fsSL --retry 2 --max-time 120 -o "$out" \
+                    "https://cdn.islamic.network/quran/audio/$br/$edition/$g.mp3" 2>/dev/null && [ -s "$out" ] && return 0
+                  sleep 1
+                done
+              done
+            fi
+            echo "MISS $folder/$ff$aa" >> missing.txt
+            rm -f "$out"
+            return 1
+          }
+          export -f dl
+
+          for folder in ${{ steps.pick.outputs.picked }}; do
+            echo "====== القارئ: $folder ======"
+            rm -rf "work/$folder"; mkdir -p "work/$folder"
+            for s in $(seq 1 114); do
+              count=${COUNTS[$((s-1))]}
+              name=$(printf "%s-%03d.zip" "$folder" "$s")
+              if grep -qx "$name" existing_assets.txt 2>/dev/null; then
+                continue
+              fi
+              outdir="work/$folder/$s"; mkdir -p "$outdir"
+              export F_FOLDER="$folder" F_SURA="$s" F_OUT="$outdir" F_OFF="${OFFSET[$s]}"
+              printf "%s\n" $(seq 1 "$count") | xargs -P 8 -n 1 -I{} bash -c \
+                'dl "$F_FOLDER" "$F_SURA" "{}" "$F_OUT"'
+              got=$(ls -1 "$outdir" 2>/dev/null | wc -l)
+              if [ "$got" -eq 0 ]; then
+                echo "!! السورة $s لم يُجلب منها ملف — تُترك للتطبيق ليجلبها آية آية"
+                continue
+              fi
+              zip -q -j "work/$folder/$(printf '%03d' $s).zip" "$outdir"/*.mp3
+              gh release upload "$RELEASE_TAG" "work/$folder/$(printf '%03d' $s).zip" \
+                --clobber --repo "$GITHUB_REPOSITORY"
+              rm -rf "$outdir" "work/$folder/$(printf '%03d' $s).zip"
+            done
+            miss=$(grep -c "^MISS $folder/" missing.txt 2>/dev/null || echo 0)
+            echo "==== انتهى $folder — الفاقد: $miss ===="
+            rm -rf "work/$folder"
+          done
+
+      - name: الخلاصة
+        if: always()
+        run: |
+          if [ -f missing.txt ]; then
+            echo "آيات تعذّر تنزيلها (سيجلبها التطبيق آية آية):"
+            sort missing.txt | uniq | head -50
+            echo "الإجمالي: $(sort missing.txt | uniq | wc -l)"
+          else
+            echo "لا فاقد — كل السور نظيفة"
+          fi
