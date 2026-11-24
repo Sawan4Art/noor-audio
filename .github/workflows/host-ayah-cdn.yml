@@ -41,83 +41,84 @@ jobs:
           - { folder: Mohammad_al_Tablaway_128kbps, release: audio-v1, branch: ayah-tablawy }
 
     steps:
-      - name: تجميع آيات القارئ (ضغطات المرآة + كلّانكَ كلّانكَ من everyayah)
-        run: python3 - <<'PYEOF'
-import os, io, re, sys, zipfile, subprocess, concurrent.futures as cf
+      - name: تجميع آيات القارئ (ضغطات المرآة + النواقص من everyayah)
+        run: |
+          python3 - <<'PYEOF'
+          import os, re, sys, zipfile, subprocess, concurrent.futures as cf
 
-folder = "${{ matrix.folder }}"
-release = "${{ matrix.release }}"
-mir = "https://github.com/Sawan4Art/noor-audio/releases/download"
-ea = "https://everyayah.com/data"
-ws = "/home/runner/work/noor-audio/noor-audio"
-dest = os.path.join(ws, folder)
-os.makedirs(dest, exist_ok=True)
+          folder = "${{ matrix.folder }}"
+          release = "${{ matrix.release }}"
+          mir = "https://github.com/Sawan4Art/noor-audio/releases/download"
+          ea = "https://everyayah.com/data"
+          ws = "/home/runner/work/noor-audio/noor-audio"
+          dest = os.path.join(ws, folder)
+          os.makedirs(dest, exist_ok=True)
 
-# عدّ آيات السور الـ١١٤ كما في المصحف — مجموعه ٦٢٣٦
-COUNTS = [7,286,200,176,120,165,206,75,129,109,123,111,43,52,99,128,111,110,98,135,112,78,118,64,77,227,93,88,69,60,34,30,73,54,45,83,182,88,75,85,54,53,89,59,37,35,38,29,18,45,60,49,62,55,78,96,29,22,24,13,14,11,11,18,12,12,30,52,52,44,28,28,20,56,40,31,50,40,46,42,29,19,36,25,22,17,19,26,30,20,15,21,11,8,8,19,5,8,8,11,11,8,3,9,5,4,7,3,6,3,5,4,5,6]
-assert sum(COUNTS) == 6236, sum(COUNTS)
+          # عدّ آيات السور الـ١١٤ كما في المصحف — مجموعه ٦٢٣٦
+          COUNTS = [7,286,200,176,120,165,206,75,129,109,123,111,43,52,99,128,111,110,98,135,112,78,118,64,77,227,93,88,69,60,34,30,73,54,45,83,182,88,75,85,54,53,89,59,37,35,38,29,18,45,60,49,62,55,78,96,29,22,24,13,14,11,11,18,12,12,30,52,52,44,28,28,20,56,40,31,50,40,46,42,29,19,36,25,22,17,19,26,30,20,15,21,11,8,8,19,5,8,8,11,11,8,3,9,5,4,7,3,6,3,5,4,5,6]
+          assert sum(COUNTS) == 6236, sum(COUNTS)
 
-def sh(cmd):
-    return subprocess.run(cmd, capture_output=True, text=True)
+          def sh(cmd):
+              return subprocess.run(cmd, capture_output=True, text=True)
 
-# ١) ضغطات المرآة الـ١١٤ — توازٍ ١٢ وفكٌّ مسطّح
-def pull_zip(sura):
-    s = f"{sura:03d}"
-    r = sh(["curl", "-sL", "--retry", "3", "--max-time", "300", "-o", f"/tmp/z{s}.zip",
+          # ١) ضغطات المرآة الـ١١٤ — توازٍ ١٢ وفكٌّ مسطّح
+          def pull_zip(sura):
+              s = f"{sura:03d}"
+              r = sh(["curl", "-sL", "--retry", "3", "--max-time", "300", "-o", f"/tmp/z{s}.zip",
             f"{mir}/{release}/{folder}-{s}.zip"])
-    if r.returncode != 0 or not os.path.getsize(f"/tmp/z{s}.zip"):
-        return 0
-    r2 = sh(["unzip", "-q", "-o", f"/tmp/z{s}.zip", "-d", dest])
-    os.remove(f"/tmp/z{s}.zip")
-    if r2.returncode != 0:
-        return 0
-    # العدّ الفعلي من مدخلات الضغط كي لا يحتسب أخطاء الفكّ
-    z = zipfile.ZipFile(f"/tmp/z{s}.zip") if os.path.exists(f"/tmp/z{s}.zip") else None
-    return 0
+              if r.returncode != 0 or not os.path.getsize(f"/tmp/z{s}.zip"):
+                  return 0
+              r2 = sh(["unzip", "-q", "-o", f"/tmp/z{s}.zip", "-d", dest])
+              os.remove(f"/tmp/z{s}.zip")
+              if r2.returncode != 0:
+                  return 0
+              # العدّ الفعلي من مدخلات الضغط كي لا يحتسب أخطاء الفكّ
+              z = zipfile.ZipFile(f"/tmp/z{s}.zip") if os.path.exists(f"/tmp/z{s}.zip") else None
+              return 0
 
-with cf.ThreadPoolExecutor(12) as ex:
-    list(ex.map(pull_zip, range(1, 115)))
+          with cf.ThreadPoolExecutor(12) as ex:
+              list(ex.map(pull_zip, range(1, 115)))
 
-def flat_ok(p):
-    return os.path.isfile(p) and os.path.getsize(p) > 1000
+          def flat_ok(p):
+              return os.path.isfile(p) and os.path.getsize(p) > 1000
 
-have = sum(1 for s in range(1, 115) for a in range(1, COUNTS[s-1]+1)
+          have = sum(1 for s in range(1, 115) for a in range(1, COUNTS[s-1]+1)
            if flat_ok(os.path.join(dest, f"{s:03d}{a:03d}.mp3")))
-print(f"من ضغطات المرآة: {have}/6236")
+          print(f"من ضغطات المرآة: {have}/6236")
 
-# ٢) الناقص آيةً آيةً من everyayah — توازٍ ١٦
-missing = [f"{s:03d}{a:03d}" for s in range(1, 115) for a in range(1, COUNTS[s-1]+1)
+          # ٢) الناقص آيةً آيةً من everyayah — توازٍ ١٦
+          missing = [f"{s:03d}{a:03d}" for s in range(1, 115) for a in range(1, COUNTS[s-1]+1)
            if not flat_ok(os.path.join(dest, f"{s:03d}{a:03d}.mp3"))]
-print(f"الناقص من everyayah: {len(missing)}")
+          print(f"الناقص من everyayah: {len(missing)}")
 
-def pull_ayah(name):
-    url = f"{ea}/{folder}/{name}.mp3"
-    tmp = os.path.join(dest, name + ".part")
-    r = sh(["curl", "-sL", "--retry", "3", "--max-time", "120", "-o", tmp, url])
-    if r.returncode == 0 and os.path.getsize(tmp) > 1000:
-        os.replace(tmp, os.path.join(dest, name + ".mp3"))
-        return True
-    if os.path.exists(tmp):
-        os.remove(tmp)
-    return False
+          def pull_ayah(name):
+              url = f"{ea}/{folder}/{name}.mp3"
+              tmp = os.path.join(dest, name + ".part")
+              r = sh(["curl", "-sL", "--retry", "3", "--max-time", "120", "-o", tmp, url])
+              if r.returncode == 0 and os.path.getsize(tmp) > 1000:
+                  os.replace(tmp, os.path.join(dest, name + ".mp3"))
+                  return True
+              if os.path.exists(tmp):
+                  os.remove(tmp)
+              return False
 
-if missing:
-    with cf.ThreadPoolExecutor(16) as ex:
-        got = sum(ex.map(pull_ayah, missing))
-    print(f"اكتمل من everyayah: {got}/{len(missing)}")
+          if missing:
+              with cf.ThreadPoolExecutor(16) as ex:
+                  got = sum(ex.map(pull_ayah, missing))
+              print(f"اكتمل من everyayah: {got}/{len(missing)}")
 
-have = sum(1 for s in range(1, 115) for a in range(1, COUNTS[s-1]+1)
+          have = sum(1 for s in range(1, 115) for a in range(1, COUNTS[s-1]+1)
            if flat_ok(os.path.join(dest, f"{s:03d}{a:03d}.mp3")))
-print(f"النهائي: {have}/6236")
-if have != 6236:
-    print("الإحكام يمنع الفرع الناقص"); sys.exit(1)
+          print(f"النهائي: {have}/6236")
+          if have != 6236:
+              print("الإحكام يمنع الفرع الناقص"); sys.exit(1)
 
-# نظافة: لا ملفات جزئية أو شاردة في الفرع
-for f in os.listdir(dest):
-    if not re.match(r"^\d{6}\.mp3$", f):
-        os.remove(os.path.join(dest, f))
-print("آيتٌ نظيفةٌ مسطّحة — جاهزة للفرع")
-PYEOF
+          # نظافة: لا ملفات جزئية أو شاردة في الفرع
+          for f in os.listdir(dest):
+              if not re.match(r"^\d{6}\.mp3$", f):
+                  os.remove(os.path.join(dest, f))
+          print("آيتٌ نظيفةٌ مسطّحة — جاهزة للفرع")
+          PYEOF
 
       - name: دفع الفرع اليتيم واختبار jsDelivr
         run: |
