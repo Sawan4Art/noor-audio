@@ -10,9 +10,9 @@ name: استضافة الآيات على فروع CDN
 # شبكة jsDelivr العالمية (cdn.jsdelivr.net/gh/Sawan4Art/noor-audio@<الفرع>/…)
 # ببنية سحابية مستقلة تماماً عن everyayah وأصول الإصدارات.
 #
-# الأصول تنزل هنا من إصدارات المرآة نفسها (نفس الملفات المحقّقة آلياً)
-# والنقل كله بين خوادم جت هب داخلياً — بلا أي حملٍ على شبكةٍ أخرى.
-# التشغيل: workflow_dispatch فقط. إعادة التشغيل تُنشئ الفرع من جديد قسراً
+# الأصول من إصدارات المرآة نفسها والنواقص آيةً آيةً من everyayah، والنقل
+# كله بين خوادم جت هب وشبكتها الحرّة — بلا أي حملٍ على شبكة المالك.
+# التشغيل: workflow_dispatch فقط. إعادة التشغيل تُنشئ الفرع قسراً جديدًا
 # فيكون الأصل دائماً نسخةً نظيفة كاملة (٦٢٣٦ ملفاً وإلا فشل الخطوة).
 
 on:
@@ -25,10 +25,6 @@ on:
 
 permissions:
   contents: write
-
-env:
-  MIR: https://github.com/Sawan4Art/noor-audio/releases/download
-  WS: /home/runner/work/noor-audio/noor-audio
 
 jobs:
   host:
@@ -45,28 +41,87 @@ jobs:
           - { folder: Mohammad_al_Tablaway_128kbps, release: audio-v1, branch: ayah-tablawy }
 
     steps:
-      - name: تنزيل ضغطات الإصدار وفكّها
-        run: |
-          REQ="${{ github.event.inputs.folders }}"
-          if [ -n "$REQ" ]; then
-            case " $REQ " in *" ${{ matrix.folder }} "*) ;; *) echo "خارج الطلب — تخطٍ"; exit 0;; esac
-          fi
-          mkdir -p "$WS/${{ matrix.folder }}"
-          # تنزيل موازٍ لضغطات السور الـ١١٤ من إصدار المرآة (نقلٌ داخليّ سريع)
-          seq -w 1 114 | xargs -P 12 -I{} sh -c '
-            s=$(printf "%03d" {})
-            curl -sL --retry 3 --max-time 300 -o "/tmp/zip-$s" \
-              "${{ env.MIR }}/${{ matrix.release }}/${{ matrix.folder }}-$s.zip" || echo "فشل سورة $s"
-            unzip -q -o "/tmp/zip-$s" -d "$WS/${{ matrix.folder }}/" 2>/dev/null || true
-            rm -f "/tmp/zip-$s"'
-          count=$(ls "$WS/${{ matrix.folder }}" | wc -l)
-          echo "الآيات المستخرجة: $count"
-          if [ "$count" -lt 6236 ]; then
-            echo "العد أقل من ٦٢٣٦ — الإحكام يمنع الفرع الناقص"; exit 1
-          fi
+      - name: تجميع آيات القارئ (ضغطات المرآة + كلّانكَ كلّانكَ من everyayah)
+        run: python3 - <<'PYEOF'
+import os, io, re, sys, zipfile, subprocess, concurrent.futures as cf
+
+folder = "${{ matrix.folder }}"
+release = "${{ matrix.release }}"
+mir = "https://github.com/Sawan4Art/noor-audio/releases/download"
+ea = "https://everyayah.com/data"
+ws = "/home/runner/work/noor-audio/noor-audio"
+dest = os.path.join(ws, folder)
+os.makedirs(dest, exist_ok=True)
+
+# عدّ آيات السور الـ١١٤ كما في المصحف — مجموعه ٦٢٣٦
+COUNTS = [7,286,200,176,120,165,206,75,129,109,123,111,43,52,99,128,111,110,98,135,112,78,118,64,77,227,93,88,69,60,34,30,73,54,45,83,182,88,75,85,54,53,89,59,37,35,38,29,18,45,60,49,62,55,78,96,29,22,24,13,14,11,11,18,12,12,30,52,52,44,28,28,20,56,40,31,50,40,46,42,29,19,36,25,22,17,19,26,30,20,15,21,11,8,8,19,5,8,8,11,11,8,3,9,5,4,7,3,6,3,5,4,5,6]
+assert sum(COUNTS) == 6236, sum(COUNTS)
+
+def sh(cmd):
+    return subprocess.run(cmd, capture_output=True, text=True)
+
+# ١) ضغطات المرآة الـ١١٤ — توازٍ ١٢ وفكٌّ مسطّح
+def pull_zip(sura):
+    s = f"{sura:03d}"
+    r = sh(["curl", "-sL", "--retry", "3", "--max-time", "300", "-o", f"/tmp/z{s}.zip",
+            f"{mir}/{release}/{folder}-{s}.zip"])
+    if r.returncode != 0 or not os.path.getsize(f"/tmp/z{s}.zip"):
+        return 0
+    r2 = sh(["unzip", "-q", "-o", f"/tmp/z{s}.zip", "-d", dest])
+    os.remove(f"/tmp/z{s}.zip")
+    if r2.returncode != 0:
+        return 0
+    # العدّ الفعلي من مدخلات الضغط كي لا يحتسب أخطاء الفكّ
+    z = zipfile.ZipFile(f"/tmp/z{s}.zip") if os.path.exists(f"/tmp/z{s}.zip") else None
+    return 0
+
+with cf.ThreadPoolExecutor(12) as ex:
+    list(ex.map(pull_zip, range(1, 115)))
+
+def flat_ok(p):
+    return os.path.isfile(p) and os.path.getsize(p) > 1000
+
+have = sum(1 for s in range(1, 115) for a in range(1, COUNTS[s-1]+1)
+           if flat_ok(os.path.join(dest, f"{s:03d}{a:03d}.mp3")))
+print(f"من ضغطات المرآة: {have}/6236")
+
+# ٢) الناقص آيةً آيةً من everyayah — توازٍ ١٦
+missing = [f"{s:03d}{a:03d}" for s in range(1, 115) for a in range(1, COUNTS[s-1]+1)
+           if not flat_ok(os.path.join(dest, f"{s:03d}{a:03d}.mp3"))]
+print(f"الناقص من everyayah: {len(missing)}")
+
+def pull_ayah(name):
+    url = f"{ea}/{folder}/{name}.mp3"
+    tmp = os.path.join(dest, name + ".part")
+    r = sh(["curl", "-sL", "--retry", "3", "--max-time", "120", "-o", tmp, url])
+    if r.returncode == 0 and os.path.getsize(tmp) > 1000:
+        os.replace(tmp, os.path.join(dest, name + ".mp3"))
+        return True
+    if os.path.exists(tmp):
+        os.remove(tmp)
+    return False
+
+if missing:
+    with cf.ThreadPoolExecutor(16) as ex:
+        got = sum(ex.map(pull_ayah, missing))
+    print(f"اكتمل من everyayah: {got}/{len(missing)}")
+
+have = sum(1 for s in range(1, 115) for a in range(1, COUNTS[s-1]+1)
+           if flat_ok(os.path.join(dest, f"{s:03d}{a:03d}.mp3")))
+print(f"النهائي: {have}/6236")
+if have != 6236:
+    print("الإحكام يمنع الفرع الناقص"); sys.exit(1)
+
+# نظافة: لا ملفات جزئية أو شاردة في الفرع
+for f in os.listdir(dest):
+    if not re.match(r"^\d{6}\.mp3$", f):
+        os.remove(os.path.join(dest, f))
+print("آيتٌ نظيفةٌ مسطّحة — جاهزة للفرع")
+PYEOF
 
       - name: دفع الفرع اليتيم واختبار jsDelivr
         run: |
+          WS=/home/runner/work/noor-audio/noor-audio
           git init -q -b "${{ matrix.branch }}" "$WS/work"
           cd "$WS/work"
           git config user.name "noor-actions"
