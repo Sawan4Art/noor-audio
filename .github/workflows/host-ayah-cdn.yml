@@ -1,0 +1,84 @@
+name: استضافة الآيات على فروع CDN
+
+# v1.85 — بلاغ المالك: «اصوات الشيوخ كلها تعمل و تقبل التنزيل الا الدوسري
+# و القاطمي و البنا و الطبلاوي». الفحص الحي أثبت أن أصول المرآة وeveryayah
+# سليمان، فالعطل على شبكة المالك نفسها، وهؤلاء الأربعة وحدهم بلا طريق
+# islamic.network إطلاقاً (٤٠٣ على كل النسبط).
+#
+# الحل: تُستضاف آياتُ الأربعة (sssaaa.mp3 مسطّحة) في **فرعٍ لكل قارئٍ**
+# (ayah-dossary، ayah-qatami، ayah-banna، ayah-tablawy) — والفرع تخدمه
+# شبكة jsDelivr العالمية (cdn.jsdelivr.net/gh/Sawan4Art/noor-audio@<الفرع>/…)
+# ببنية سحابية مستقلة تماماً عن everyayah وأصول الإصدارات.
+#
+# الأصول تنزل هنا من إصدارات المرآة نفسها (نفس الملفات المحقّقة آلياً)
+# والنقل كله بين خوادم جت هب داخلياً — بلا أي حملٍ على شبكةٍ أخرى.
+# التشغيل: workflow_dispatch فقط. إعادة التشغيل تُنشئ الفرع من جديد قسراً
+# فيكون الأصل دائماً نسخةً نظيفة كاملة (٦٢٣٦ ملفاً وإلا فشل الخطوة).
+
+on:
+  workflow_dispatch:
+    inputs:
+      folders:
+        description: 'مجلدات مفصولة بمسافة (فارغ = الأربعة كلهم)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+env:
+  MIR: https://github.com/Sawan4Art/noor-audio/releases/download
+  WS: /home/runner/work/noor-audio/noor-audio
+
+jobs:
+  host:
+    name: استضافة ${{ matrix.folder }} → ${{ matrix.branch }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { folder: Yasser_Ad-Dussary_128kbps,   release: audio-v3, branch: ayah-dossary }
+          - { folder: Nasser_Alqatami_128kbps,     release: audio-v2, branch: ayah-qatami }
+          - { folder: mahmoud_ali_al_banna_32kbps, release: audio-v1, branch: ayah-banna }
+          - { folder: Mohammad_al_Tablaway_128kbps, release: audio-v1, branch: ayah-tablawy }
+
+    steps:
+      - name: تنزيل ضغطات الإصدار وفكّها
+        run: |
+          REQ="${{ github.event.inputs.folders }}"
+          if [ -n "$REQ" ]; then
+            case " $REQ " in *" ${{ matrix.folder }} "*) ;; *) echo "خارج الطلب — تخطٍ"; exit 0;; esac
+          fi
+          mkdir -p "$WS/${{ matrix.folder }}"
+          # تنزيل موازٍ لضغطات السور الـ١١٤ من إصدار المرآة (نقلٌ داخليّ سريع)
+          seq -w 1 114 | xargs -P 12 -I{} sh -c '
+            s=$(printf "%03d" {})
+            curl -sL --retry 3 --max-time 300 -o "/tmp/zip-$s" \
+              "${{ env.MIR }}/${{ matrix.release }}/${{ matrix.folder }}-$s.zip" || echo "فشل سورة $s"
+            unzip -q -o "/tmp/zip-$s" -d "$WS/${{ matrix.folder }}/" 2>/dev/null || true
+            rm -f "/tmp/zip-$s"'
+          count=$(ls "$WS/${{ matrix.folder }}" | wc -l)
+          echo "الآيات المستخرجة: $count"
+          if [ "$count" -lt 6236 ]; then
+            echo "العد أقل من ٦٢٣٦ — الإحكام يمنع الفرع الناقص"; exit 1
+          fi
+
+      - name: دفع الفرع اليتيم واختبار jsDelivr
+        run: |
+          git init -q -b "${{ matrix.branch }}" "$WS/work"
+          cd "$WS/work"
+          git config user.name "noor-actions"
+          git config user.email "actions@noor.local"
+          mv "$WS/${{ matrix.folder }}" .
+          git add -f "${{ matrix.folder }}"
+          git commit -q -m "آيات ${{ matrix.folder }} — ٦٢٣٦ ملفاً لشبكة jsDelivr"
+          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          git push -q -f origin "${{ matrix.branch }}"
+          echo "الفرع ${{ matrix.branch }} دُفع — الاختبار اللحظي:"
+          sleep 8
+          curl -sL -o /dev/null -w "jsDelivr 001001.mp3 → HTTP %{http_code}\n" \
+            "https://cdn.jsdelivr.net/gh/Sawan4Art/noor-audio@${{ matrix.branch }}/${{ matrix.folder }}/001001.mp3"
+          curl -sL -o /dev/null -w "jsDelivr 002255.mp3 → HTTP %{http_code}\n" \
+            "https://cdn.jsdelivr.net/gh/Sawan4Art/noor-audio@${{ matrix.branch }}/${{ matrix.folder }}/002255.mp3"
